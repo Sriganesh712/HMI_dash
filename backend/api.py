@@ -27,8 +27,9 @@ DB_FILE = "datalog.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    c.execute('DROP TABLE IF EXISTS modbus_data')
     c.execute('''
-        CREATE TABLE IF NOT EXISTS modbus_data (
+        CREATE TABLE modbus_data (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             fcu_in REAL,
@@ -49,16 +50,78 @@ def init_db():
             ac_chamber_set_temp_cooler REAL,
             ac_chamber_set_temp_heater REAL,
             room_temp REAL,
+            evaporator_out_diff REAL,
+            air_chamber_diff_chiller REAL,
+            air_chamber_diff_heater REAL,
             heater_actuator_feedback REAL,
-            chilled_water_inlet_actuator_feedback REAL,
-            supply_actuator_feedback REAL,
-            return_actuator_feedback REAL,
-            fcu_bypass_actuator_feedback REAL,
-            condenser_inlet_actuator_feedback REAL,
-            heater_actuator REAL,
-            chilled_water_inlet_actuator REAL,
+            co_supply REAL,
+            co_return REAL,
+            unknown2 REAL,
+            chilled_water REAL,
             fcu_bypass_actuator REAL,
-            return_actuator REAL
+            return_actuator REAL,
+            voltage_v1n REAL,
+            voltage_v2n REAL,
+            voltage_v3n REAL,
+            avg_voltage_ln REAL,
+            voltage_v12 REAL,
+            voltage_v23 REAL,
+            voltage_v31 REAL,
+            avg_voltage_ll REAL,
+            current_i1 REAL,
+            current_i2 REAL,
+            current_i3 REAL,
+            avg_current REAL,
+            kw1 REAL,
+            kw2 REAL,
+            kw3 REAL,
+            total_kw REAL,
+            kvar2 REAL,
+            kvar3 REAL,
+            kva1 REAL,
+            kva2 REAL,
+            kva3 REAL,
+            pf1 REAL,
+            pf2 REAL,
+            pf3 REAL,
+            avg_pf REAL,
+            frequency REAL,
+            total_kw_2 REAL,
+            total_kvar REAL,
+            total_kva REAL,
+            active_power_max_demand REAL,
+            active_power_min_demand REAL,
+            reactive_power_max_demand REAL,
+            reactive_power_min_demand REAL,
+            apparent_power_max_demand REAL,
+            max_voltage_v1n REAL,
+            max_voltage_v2n REAL,
+            max_voltage_v3n REAL,
+            max_voltage_v12 REAL,
+            max_voltage_v23 REAL,
+            max_voltage_v31 REAL,
+            max_current_i1 REAL,
+            max_current_i2 REAL,
+            max_current_i3 REAL,
+            import_active_energy REAL,
+            export_active_energy REAL,
+            total_active_energy REAL,
+            import_reactive_energy REAL,
+            export_reactive_energy REAL,
+            total_reactive_energy REAL,
+            total_apparent_energy REAL,
+            run_hour REAL,
+            aux_interrupts REAL,
+            thd_voltage_v1n REAL,
+            thd_voltage_v2n REAL,
+            thd_voltage_v3n REAL,
+            thd_voltage_v12 REAL,
+            thd_voltage_v23 REAL,
+            thd_voltage_v31 REAL,
+            thd_current_i1 REAL,
+            thd_current_i2 REAL,
+            thd_current_i3 REAL,
+            serial_number REAL
         )
     ''')
     conn.commit()
@@ -75,6 +138,7 @@ class ModbusManager:
         self.running = False
         self.latest_data = {}
         self.device_id = 3
+        
 
     def connect(self, port: str) -> bool:
         if self.is_connected and self.client:
@@ -108,6 +172,13 @@ def decode_float_abcd(reg1, reg2):
     except Exception:
         return 0.0
 
+def decode_float_cdab(reg1, reg2):
+    try:
+        packed = struct.pack('>HH', reg2, reg1)
+        return struct.unpack('>f', packed)[0]
+    except Exception:
+        return 0.0
+
 REGISTER_MAP = [
     (0, "fcu_in", "float"),
     (2, "condenser_out", "float"),
@@ -127,40 +198,136 @@ REGISTER_MAP = [
     (30, "ac_chamber_set_temp_cooler", "float"),
     (32, "ac_chamber_set_temp_heater", "float"),
     (34, "room_temp", "float"),
-    (36, "heater_actuator_feedback", "float"),
-    (38, "chilled_water_inlet_actuator_feedback", "float"),
-    (40, "supply_actuator_feedback", "float"),
-    (42, "return_actuator_feedback", "float"),
-    (44, "fcu_bypass_actuator_feedback", "float"),
-    (46, "condenser_inlet_actuator_feedback", "float"),
-    (48, "heater_actuator", "float"),
-    (50, "chilled_water_inlet_actuator", "float"),
-    (52, "fcu_bypass_actuator", "float"),
+    (36, "evaporator_out_diff", "float"),
+    (38, "air_chamber_diff_chiller", "float"),
+    (40, "air_chamber_diff_heater", "float"),
+    (42, "heater_actuator_feedback", "float"),
+    (44, "co_supply", "float"),
+    (46, "co_return", "float"),
+    (48, "chilled_water", "float"),
+    (50, "fcu_bypass_actuator", "float"),
+    (52, "unknown2", "float"),
     (54, "return_actuator", "float"),
+]
+
+EM_REGISTER_MAP = [
+    (0, "voltage_v1n", "float"),
+    (2, "voltage_v2n", "float"),
+    (4, "voltage_v3n", "float"),
+    (6, "avg_voltage_ln", "float"),
+    (8, "voltage_v12", "float"),
+    (10, "voltage_v23", "float"),
+    (12, "voltage_v31", "float"),
+    (14, "avg_voltage_ll", "float"),
+    (16, "current_i1", "float"),
+    (18, "current_i2", "float"),
+    (20, "current_i3", "float"),
+    (22, "avg_current", "float"),
+    (24, "kw1", "float"),
+    (26, "kw2", "float"),
+    (28, "kw3", "float"),
+    (30, "total_kw", "float"),
+    (32, "kvar2", "float"),
+    (34, "kvar3", "float"),
+    (36, "kva1", "float"),
+    (38, "kva2", "float"),
+    (40, "kva3", "float"),
+    (42, "pf1", "float"),
+    (44, "pf2", "float"),
+    (46, "pf3", "float"),
+    (48, "avg_pf", "float"),
+    (50, "frequency", "float"),
+    (52, "total_kw_2", "float"),
+    (54, "total_kvar", "float"),
+    (56, "total_kva", "float"),
+    (58, "active_power_max_demand", "float"),
+    (60, "active_power_min_demand", "float"),
+    (62, "reactive_power_max_demand", "float"),
+    (64, "reactive_power_min_demand", "float"),
+    (66, "apparent_power_max_demand", "float"),
+    (68, "max_voltage_v1n", "float"),
+    (70, "max_voltage_v2n", "float"),
+    (72, "max_voltage_v3n", "float"),
+    (74, "max_voltage_v12", "float"),
+    (76, "max_voltage_v23", "float"),
+    (78, "max_voltage_v31", "float"),
+    (80, "max_current_i1", "float"),
+    (82, "max_current_i2", "float"),
+    (84, "max_current_i3", "float"),
+    (86, "import_active_energy", "float"),
+    (88, "export_active_energy", "float"),
+    (90, "total_active_energy", "float"),
+    (92, "import_reactive_energy", "float"),
+    (94, "export_reactive_energy", "float"),
+    (96, "total_reactive_energy", "float"),
+    (98, "total_apparent_energy", "float"),
+    (100, "run_hour", "float"),
+    (102, "aux_interrupts", "float"),
+    (124, "thd_voltage_v1n", "float"),
+    (126, "thd_voltage_v2n", "float"),
+    (128, "thd_voltage_v3n", "float"),
+    (130, "thd_voltage_v12", "float"),
+    (132, "thd_voltage_v23", "float"),
+    (134, "thd_voltage_v31", "float"),
+    (136, "thd_current_i1", "float"),
+    (138, "thd_current_i2", "float"),
+    (140, "thd_current_i3", "float"),
+    (684, "serial_number", "float"),
 ]
 
 def read_modbus_data():
     if not modbus_manager.is_connected or not modbus_manager.client:
         return None
     
+    data = {}
     try:
-        rr = modbus_manager.client.read_holding_registers(address=0, count=56, device_id=modbus_manager.device_id)
-        if rr.isError():
-            return None
-        
-        regs = rr.registers
-        data = {}
-        for addr, key_name, dtype in REGISTER_MAP:
-            if dtype == "float" and addr + 1 < len(regs):
-                r1 = regs[addr]
-                r2 = regs[addr+1]
-                data[key_name] = round(decode_float_abcd(r1, r2), 4)
-            elif dtype != "float" and addr < len(regs):
-                val = regs[addr]
-                signed_val = val if val < 32768 else val - 65536
-                data[key_name] = signed_val
+        # --- Device 3 (HVAC HMI) ---
+        rr3 = modbus_manager.client.read_holding_registers(address=0, count=56, device_id=3)
+        if not rr3.isError():
+            regs3 = rr3.registers
+            for addr, key_name, dtype in REGISTER_MAP:
+                if dtype == "float" and addr + 1 < len(regs3):
+                    data[key_name] = round(decode_float_abcd(regs3[addr], regs3[addr+1]), 4)
+                elif dtype != "float" and addr < len(regs3):
+                    val = regs3[addr]
+                    data[key_name] = val if val < 32768 else val - 65536
+                else:
+                    data[key_name] = None
+        else:
+            print(f"Device 3 error: {rr3}")
+            # Populate None to maintain schema consistency
+            for _, key_name, _ in REGISTER_MAP:
+                data[key_name] = None
+
+        # --- Device 2 (Energy Meter) ---
+        regs2_parts = {}
+        # Read Part 1: 0-103
+        rr2_1 = modbus_manager.client.read_input_registers(address=0, count=104, device_id=2)
+        if not rr2_1.isError():
+            for idx, val in enumerate(rr2_1.registers):
+                regs2_parts[idx] = val
+                
+        # Read Part 2: 124-141
+        rr2_2 = modbus_manager.client.read_input_registers(address=124, count=18, device_id=2)
+        if not rr2_2.isError():
+            for idx, val in enumerate(rr2_2.registers):
+                regs2_parts[124 + idx] = val
+                
+        # Read Part 3: 684-685
+        rr2_3 = modbus_manager.client.read_input_registers(address=684, count=2, device_id=2)
+        if not rr2_3.isError():
+            for idx, val in enumerate(rr2_3.registers):
+                regs2_parts[684 + idx] = val
+
+        for addr, key_name, dtype in EM_REGISTER_MAP:
+            if dtype == "float" and addr in regs2_parts and (addr+1) in regs2_parts:
+                data[key_name] = round(decode_float_cdab(regs2_parts[addr], regs2_parts[addr+1]), 4)
+            elif dtype != "float" and addr in regs2_parts:
+                val = regs2_parts[addr]
+                data[key_name] = val if val < 32768 else val - 65536
             else:
                 data[key_name] = None
+
         return data
     except Exception as e:
         print(f"Modbus read error: {e}")
